@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kaun Banega Crorepati</title>
+  <style>
+    body {
+      background: radial-gradient(circle, #0d1b2a, #000);
+      color: white;
+      font-family: Arial, sans-serif;
+      display: flex;
+      justify-content: space-between;
+      height: 100vh;
+      margin: 0;
+      overflow: hidden;
+    }
+
+    .game-container {
+      flex: 3;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      align-items: center;
+      padding: 0;
+      position: relative;
+    }
+
+    video#camera {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      z-index: 1;
+    }
+
+    .overlay {
+      position: absolute;
+      bottom: 0;
+      z-index: 2;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding-bottom: 20px;
+    }
+
+    .question-box {
+      background: rgba(27, 38, 59, 0.9);
+      border: 3px solid #ffd700;
+      padding: 20px;
+      border-radius: 12px;
+      font-size: 20px;
+      margin-bottom: 20px;
+      width: 80%;
+      text-align: center;
+    }
+
+    .options {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 15px;
+      width: 80%;
+      margin-bottom: 20px;
+    }
+
+    .option {
+      background: rgba(27, 38, 59, 0.9);
+      border: 2px solid #00b4d8;
+      padding: 12px;
+      border-radius: 8px;
+      text-align: center;
+      cursor: pointer;
+      font-size: 18px;
+      transition: background 0.3s, transform 0.2s;
+    }
+
+    .option:hover {
+      background: #415a77;
+      transform: scale(1.05);
+    }
+
+    .option.selected {
+      background: orange;
+    }
+
+    .option.correct {
+      background: green;
+    }
+
+    .option.wrong {
+      background: red;
+    }
+
+    .sidebar {
+      flex: 1;
+      background: #0d1b2a;
+      border-left: 3px solid #ffd700;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-end;
+    }
+
+    .ladder {
+      display: flex;
+      flex-direction: column-reverse;
+      gap: 10px;
+      width: 100%;
+      align-items: center;
+    }
+
+    .level {
+      border: 2px solid #ffd700;
+      padding: 8px 20px;
+      border-radius: 25px;
+      background: #1b263b;
+      width: 80%;
+      text-align: center;
+      font-size: 16px;
+    }
+
+    .level.active {
+      background: #ffd700;
+      color: black;
+      font-weight: bold;
+    }
+
+    .lifelines {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+
+    .lifeline {
+      border: 2px solid #ffd700;
+      padding: 8px 15px;
+      border-radius: 20px;
+      background: #1b263b;
+      cursor: pointer;
+      position: relative;
+    }
+
+    .lifeline.used::after {
+      content: "X";
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: red;
+      font-size: 22px;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <div class="game-container">
+    <video id="camera" autoplay muted playsinline></video>
+    <div class="overlay">
+      <div class="question-box" id="question">Loading question...</div>
+      <div class="options" id="options"></div>
+    </div>
+  </div>
+
+  <div class="sidebar">
+    <div class="lifelines">
+      <div class="lifeline" id="fifty">50:50</div>
+      <div class="lifeline" id="phone">Phone a Friend</div>
+      <div class="lifeline" id="audience">Audience Poll</div>
+    </div>
+    <div class="ladder" id="ladder"></div>
+  </div>
+
+  <audio id="correct-sound" src="https://www.myinstants.com/media/sounds/correct-answer.mp3"></audio>
+  <audio id="wrong-sound" src="https://www.myinstants.com/media/sounds/wrong-answer-sound-effect.mp3"></audio>
+
+  <script>
+    // Camera feed setup
+    async function setupCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        document.getElementById("camera").srcObject = stream;
+      } catch (err) {
+        console.error("Camera access denied: ", err);
+      }
+    }
+
+    let currentLevelIndex = 0;
+    const levels = ["₹1,000", "₹2,000", "₹5,000", "₹10,000", "₹20,000", "₹40,000", "₹80,000", "₹1,60,000", "₹3,20,000", "₹6,40,000", "₹12,50,000", "₹25,00,000", "₹50,00,000", "₹1 Crore"];
+    let usedLifelines = {
+      fifty: false,
+      phone: false,
+      audience: false
+    };
+
+    let currentAnswer = null;
+
+    async function loadQuestion() {
+      const level = levels[currentLevelIndex];
+      try {
+        const response = await fetch(`http://127.0.0.1:8000/question/${encodeURIComponent(level)}`);
+        if (!response.ok) throw new Error("API error");
+        const data = await response.json();
+        currentAnswer = data.answer;
+        displayQuestion(data);
+      } catch (error) {
+        document.getElementById("question").innerText = "Failed to load question. Check API.";
+      }
+    }
+
+    function displayQuestion(data) {
+      const questionBox = document.getElementById("question");
+      const optionsBox = document.getElementById("options");
+      questionBox.innerText = data.question;
+      optionsBox.innerHTML = "";
+      data.options.forEach(option => {
+        const div = document.createElement("div");
+        div.classList.add("option");
+        div.innerText = option;
+        div.onclick = () => selectOption(div, option, data.answer);
+        optionsBox.appendChild(div);
+      });
+    }
+
+    function selectOption(div, option, answer) {
+      const options = document.querySelectorAll(".option");
+      options.forEach(o => o.classList.remove("selected"));
+      div.classList.add("selected");
+
+      setTimeout(() => {
+        if (option === answer) {
+          div.classList.add("correct");
+          document.getElementById("correct-sound").play();
+          currentLevelIndex++;
+          if (currentLevelIndex < levels.length) {
+            setTimeout(loadQuestion, 2000);
+            updateLadder();
+          } else {
+            document.getElementById("question").innerText = "🎉 Congratulations! You won ₹1 Crore! 🎉";
+          }
+        } else {
+          div.classList.add("wrong");
+          document.getElementById("wrong-sound").play();
+
+          // Highlight correct option when wrong is chosen
+          const options = document.querySelectorAll(".option");
+          options.forEach(o => {
+            if (o.innerText === answer) {
+              o.classList.add("correct");
+            }
+          });
+
+          document.getElementById("question").innerText = "❌ Wrong Answer! Game Over.";
+        }
+      }, 1500);
+    }
+
+    function updateLadder() {
+      const ladder = document.getElementById("ladder");
+      ladder.innerHTML = "";
+      levels.forEach((level, index) => {
+        const div = document.createElement("div");
+        div.classList.add("level");
+        if (index === currentLevelIndex) div.classList.add("active");
+        div.innerText = level;
+        ladder.appendChild(div);
+      });
+    }
+
+    function setupLifelines() {
+      document.getElementById("fifty").onclick = () => {
+        if (usedLifelines.fifty || !currentAnswer) return;
+        usedLifelines.fifty = true;
+        document.getElementById("fifty").classList.add("used");
+
+        const options = Array.from(document.querySelectorAll(".option"));
+        const correctOption = options.find(o => o.innerText === currentAnswer);
+        const wrongOptions = options.filter(o => o.innerText !== currentAnswer);
+
+        // Randomly keep one wrong option and hide the rest
+        const keepWrong = wrongOptions[Math.floor(Math.random() * wrongOptions.length)];
+        wrongOptions.forEach(o => {
+          if (o !== keepWrong) o.style.visibility = "hidden";
+        });
+      };
+
+      document.getElementById("phone").onclick = () => {
+        if (usedLifelines.phone || !currentAnswer) return;
+        usedLifelines.phone = true;
+        document.getElementById("phone").classList.add("used");
+        alert("📞 Your friend suggests the correct answer might be: " + currentAnswer);
+      };
+
+      document.getElementById("audience").onclick = () => {
+        if (usedLifelines.audience || !currentAnswer) return;
+        usedLifelines.audience = true;
+        document.getElementById("audience").classList.add("used");
+
+        const options = Array.from(document.querySelectorAll(".option"));
+        let poll = {};
+        options.forEach(o => {
+          poll[o.innerText] = (o.innerText === currentAnswer) ? Math.floor(Math.random() * 30) + 50 : Math.floor(Math.random() * 20);
+        });
+
+        let pollResults = "📊 Audience Poll Results:\n";
+        for (let [opt, val] of Object.entries(poll)) {
+          pollResults += `${opt}: ${val}%\n`;
+        }
+
+        alert(pollResults);
+      };
+    }
+
+    setupCamera();
+    updateLadder();
+    loadQuestion();
+    setupLifelines();
+  </script>
+</body>
+</html>
